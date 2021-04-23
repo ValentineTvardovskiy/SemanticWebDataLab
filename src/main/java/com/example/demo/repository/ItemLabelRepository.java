@@ -8,9 +8,4 @@ import java.util.List;
 
 @Repository
 public interface ItemLabelRepository extends JpaRepository<ItemLabel, Long> {
-
-    List<ItemLabel> findByType(String type);
-    List<ItemLabel> findByValue(String value);
-    List<ItemLabel> findByLang(String lang);
-    ItemLabel findByItemId(Long itemId);
 }
