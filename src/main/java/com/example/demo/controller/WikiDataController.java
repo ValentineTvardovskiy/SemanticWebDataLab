@@ -8,10 +8,15 @@ import com.example.demo.domain.internal.Item;
 import com.example.demo.domain.internal.ItemLabel;
 import com.example.demo.repository.ItemLabelRepository;
 import com.example.demo.repository.ItemRepository;
+import org.apache.commons.io.IOUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +24,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -34,7 +43,7 @@ public class WikiDataController {
     }
 
     @GetMapping("/wiki/data")
-    public String receiveData() {
+    public ResponseEntity<byte[]> receiveData() {
         UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl("https://query.wikidata.org/sparql")
                 // query param already decoded here
                 .queryParam("query", "SELECT ?item ?itemLabel WHERE {  ?item wdt:P31 wd:Q146.   SERVICE wikibase:label { bd:serviceParam wikibase:language \"[AUTO_LANGUAGE],en\". }}")
@@ -45,6 +54,20 @@ public class WikiDataController {
         ResponseEntity<WikiDataDTO> response = new RestTemplate().exchange(builder.build().encode().toUri(), HttpMethod.GET, httpEntity, WikiDataDTO.class);
 
         List<BindingDTO> bindings = response.getBody().getResults().getBindings();
+        saveQueriedWikiData(bindings);
+
+        HttpHeaders csvHeaders = new HttpHeaders();
+        csvHeaders.setLastModified(System.currentTimeMillis());
+        csvHeaders.setContentType(MediaType.TEXT_PLAIN);
+        csvHeaders.setContentDispositionFormData("data", "WikiData.csv");
+
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        exportWikiData(outputStream, bindings);
+
+        return new ResponseEntity<>(outputStream.toByteArray(), csvHeaders, HttpStatus.OK);
+    }
+
+    private void saveQueriedWikiData(List<BindingDTO> bindings) {
         for (BindingDTO binding : bindings) {
             ItemDTO itemDTO = binding.getItem();
             ItemLabelDTO itemLabelDTO = binding.getItemLabel();
@@ -61,6 +84,41 @@ public class WikiDataController {
             itemLabel.setValue(itemLabelDTO.getValue());
             itemLabelRepository.save(itemLabel);
         }
-        return response.getBody().toString();
+    }
+
+    private void exportWikiData(OutputStream outputStream, List<BindingDTO> bindings) {
+        attachCustomerHeader(outputStream);
+
+        for (BindingDTO binding : bindings) {
+            attachWikiDataDetails(outputStream, binding);
+        }
+    }
+
+    private void attachCustomerHeader(OutputStream outputStream) {
+        StringBuilder header = new StringBuilder();
+        header.append("item").append(";");
+        header.append("itemLabel").append(";");
+        header.append("\n");
+
+        writeSilently(outputStream, header);
+    }
+
+    private void attachWikiDataDetails(OutputStream outputStream, BindingDTO binding) {
+
+        StringBuilder line = new StringBuilder();
+        line.append(binding.getItem().getValue()).append(";");
+        line.append(binding.getItemLabel().getValue()).append(";");
+        line.append("\n");
+
+        writeSilently(outputStream, line);
+    }
+
+    private void writeSilently(OutputStream outputStream, StringBuilder buffer) {
+        try {
+            IOUtils.write(buffer.toString().getBytes(StandardCharsets.UTF_8), outputStream);
+        }
+        catch (IOException e) {
+            //
+        }
     }
 }
